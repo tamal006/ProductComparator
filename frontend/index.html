@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Payment Portal</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js" type="application/javascript"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: white; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .card { background: #1e293b; padding: 2rem; border-radius: 12px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.5); text-align: center; max-width: 400px; width: 100%; border: 1px solid #334155; }
+        button { background: #3b82f6; color: white; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: bold; width: 100%; transition: background 0.2s; }
+        button:hover { background: #2563eb; }
+        button:disabled { background: #475569; cursor: not-allowed; }
+        .status { margin-top: 20px; font-size: 14px; word-break: break-all; color: #94a3b8; }
+        .tx-hash { margin-top: 15px; padding: 10px; background: #0f172a; border-radius: 6px; font-family: monospace; display: none; border: 1px solid #3b82f6; color: #60a5fa; position: relative; }
+        .copy-btn { background: #10b981; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 13px; cursor: pointer; margin-top: 8px; font-weight: 600; transition: all 0.2s; }
+        .copy-btn:hover { background: #059669; transform: scale(1.05); }
+        .copy-btn.copied { background: #6366f1; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>🤖 AI Agent Payment</h2>
+        <p>A microtransaction of <b>0.00001 Tokens</b> is required on Fuji Testnet to process your analysis.</p>
+        <button id="payBtn">Pay with MetaMask</button>
+        <button id="corePayBtn" style="background: #e84142; margin-top: 10px;">Pay with Core</button>
+        
+        <div style="margin-top: 20px; border-top: 1px solid #334155; padding-top: 20px;">
+            <p style="font-size: 14px; color: #94a3b8; margin-bottom: 10px;">Or pay from any mobile wallet:</p>
+            <div id="qrcode" style="display: flex; justify-content: center; background: white; padding: 10px; border-radius: 8px; width: fit-content; margin: 0 auto;"></div>
+            <p style="font-size: 12px; margin-top: 10px; color: #cbd5e1; word-break: break-all;" id="addressText"></p>
+        </div>
+
+        <div id="status" class="status">Waiting for connection...</div>
+        <div id="txHash" class="tx-hash"></div>
+    </div>
+
+    <script>
+        const REQUIRED_AMOUNT = "0.00001";
+        
+        async function processPayment(providerObj, btnId, walletName) {
+            const statusEl = document.getElementById('status');
+            const txHashEl = document.getElementById('txHash');
+            
+            // Get contract address from URL params
+            const urlParams = new URLSearchParams(window.location.search);
+            const contractAddress = urlParams.get('address') || "0x4d9718e7235CC8c11E26829eCCa34EB19Aa5cb68";
+
+            // Render QR Code once on load
+            if (!window.qrGenerated) {
+                document.getElementById('addressText').innerText = contractAddress;
+                new QRCode(document.getElementById("qrcode"), {
+                    text: `avalanche:${contractAddress}?amount=${REQUIRED_AMOUNT}`,
+                    width: 128,
+                    height: 128,
+                    colorDark : "#000000",
+                    colorLight : "#ffffff",
+                    correctLevel : QRCode.CorrectLevel.M
+                });
+                window.qrGenerated = true;
+            }
+
+            // If we only wanted to render the QR code on load, stop here
+            if (walletName === 'InitRQ') return;
+
+            if (typeof providerObj === 'undefined') {
+                statusEl.innerHTML = `❌ ${walletName} is not installed!`;
+                return;
+            }
+
+            try {
+                document.getElementById('payBtn').disabled = true;
+                document.getElementById('corePayBtn').disabled = true;
+                statusEl.innerHTML = "Requesting account access...";
+                
+                await providerObj.request({ method: 'eth_requestAccounts' });
+                
+                const provider = new ethers.providers.Web3Provider(providerObj);
+                const signer = provider.getSigner();
+                
+                // Ensure correct network (Fuji 43113)
+                const network = await provider.getNetwork();
+                if (network.chainId !== 43113) {
+                    statusEl.innerHTML = `${walletName} must be on Avalanche Fuji Testnet. Requesting network switch...`;
+                    try {
+                        await providerObj.request({
+                            method: 'wallet_switchEthereumChain',
+                            params: [{ chainId: '0xa869' }], // 43113 in hex
+                        });
+                        statusEl.innerHTML = "Switched to Fuji Testnet. Proceeding with payment...";
+                    } catch (switchError) {
+                        // This error code indicates that the chain has not been added to the wallet.
+                        if (switchError.code === 4902) {
+                            try {
+                                statusEl.innerHTML = `Adding Fuji Testnet to ${walletName}...`;
+                                await providerObj.request({
+                                    method: 'wallet_addEthereumChain',
+                                    params: [
+                                        {
+                                            chainId: '0xa869',
+                                            chainName: 'Avalanche Fuji Testnet',
+                                            rpcUrls: ['https://api.avax-test.network/ext/bc/C/rpc'],
+                                            nativeCurrency: {
+                                                name: 'AVAX',
+                                                symbol: 'AVAX',
+                                                decimals: 18
+                                            },
+                                            blockExplorerUrls: ['https://testnet.snowtrace.io/']
+                                        }
+                                    ],
+                                });
+                                statusEl.innerHTML = "Network added. Proceeding with payment...";
+                            } catch (addError) {
+                                statusEl.innerHTML = "⚠️ Failed to add Fuji Testnet automatically. Please add it manually.";
+                                document.getElementById('payBtn').disabled = false;
+                                document.getElementById('corePayBtn').disabled = false;
+                                return;
+                            }
+                        } else {
+                            statusEl.innerHTML = `⚠️ Please switch ${walletName} to Avalanche Fuji Testnet manually.`;
+                            document.getElementById('payBtn').disabled = false;
+                            document.getElementById('corePayBtn').disabled = false;
+                            return;
+                        }
+                    }
+                }
+
+                statusEl.innerHTML = `Please confirm the transaction in ${walletName}...`;
+                
+                const tokenABI = [
+                    "function transfer(address to, uint256 amount) returns (bool)",
+                    "function balanceOf(address account) view returns (uint256)",
+                    "function decimals() pure returns (uint8)",
+                    "function name() view returns (string)",
+                    "function symbol() view returns (string)",
+                    "function allowance(address owner, address spender) view returns (uint256)",
+                    "function approve(address spender, uint256 value) returns (bool)",
+                    "function totalSupply() view returns (uint256)",
+                    "function transferFrom(address from, address to, uint256 value) returns (bool)",
+                    "function mint(address to, uint256 amount)",
+                    "function owner() view returns (address)"
+                ];
+                const tokenContract = new ethers.Contract(contractAddress, tokenABI, signer);
+                
+                // Get token info for display
+                try {
+                    const tokenName = await tokenContract.name();
+                    const tokenSymbol = await tokenContract.symbol();
+                    statusEl.innerHTML = `Sending ${REQUIRED_AMOUNT} ${tokenSymbol} (${tokenName})...`;
+                } catch(e) { /* ignore if name/symbol fail */ }
+
+                // Transfer tokens to the receiving address (the contract owner / service provider)
+                const RECEIVER_ADDRESS = "0xA645E5D0724d84c7949F312e9eBd7d7eBd05B15A";
+                const tx = await tokenContract.transfer(RECEIVER_ADDRESS, ethers.utils.parseEther(REQUIRED_AMOUNT));
+
+                statusEl.innerHTML = `Transaction sent! Waiting for confirmation...`;
+                
+                const receipt = await tx.wait();
+                
+                statusEl.innerHTML = "✅ Payment Successful! Copy the transaction hash below and paste it in the CLI.";
+                txHashEl.style.display = "block";
+                const txHashValue = receipt.transactionHash;
+                txHashEl.innerHTML = `<b>TxHash for CLI:</b><br><span id="txHashText" style="word-break:break-all;">${txHashValue}</span><br><button class="copy-btn" id="copyBtn" onclick="copyTxHash()">📋 Copy Transaction Hash</button>`;
+
+            } catch (error) {
+                console.error(error);
+                statusEl.innerHTML = `❌ Error: ${error.message}`;
+            } finally {
+                document.getElementById('payBtn').disabled = false;
+                document.getElementById('corePayBtn').disabled = false;
+            }
+        }
+        
+        document.getElementById('payBtn').addEventListener('click', () => {
+            processPayment(window.ethereum, 'payBtn', 'MetaMask');
+        });
+
+        document.getElementById('corePayBtn').addEventListener('click', () => {
+            processPayment(window.avalanche, 'corePayBtn', 'Core Wallet');
+        });
+
+        // Initialize QR code on page load without requiring a click
+        window.addEventListener('DOMContentLoaded', () => {
+            processPayment(undefined, null, 'InitRQ'); // Just pass undefined to trigger the QR snippet
+        });
+
+        // Copy transaction hash to clipboard
+        function copyTxHash() {
+            const txText = document.getElementById('txHashText')?.innerText;
+            if (txText) {
+                navigator.clipboard.writeText(txText).then(() => {
+                    const btn = document.getElementById('copyBtn');
+                    btn.innerText = '✅ Copied!';
+                    btn.classList.add('copied');
+                    setTimeout(() => {
+                        btn.innerText = '📋 Copy Transaction Hash';
+                        btn.classList.remove('copied');
+                    }, 2000);
+                }).catch(() => {
+                    // Fallback for older browsers
+                    const textarea = document.createElement('textarea');
+                    textarea.value = txText;
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    const btn = document.getElementById('copyBtn');
+                    btn.innerText = '✅ Copied!';
+                    btn.classList.add('copied');
+                });
+            }
+        }
+    </script>
+</body>
+</html>

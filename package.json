@@ -1,0 +1,25 @@
+{
+  "name": "product-comparator-agent",
+  "version": "1.0.0",
+  "description": "Product Comparator AI Agent with x402 payment",
+  "main": "backend/server.js",
+  "scripts": {
+    "start": "node backend/server.js",
+    "agent": "node agent/agent.js"
+  },
+  "dependencies": {
+    "@google/genai": "^1.45.0",
+    "axios": "^1.6.8",
+    "cheerio": "^1.0.0-rc.12",
+    "dotenv": "^16.6.1",
+    "ethers": "^6.16.0",
+    "express": "^4.19.2",
+    "facinet-sdk": "^1.0.0",
+    "openai": "^6.29.0"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "esbuild": "^0.27.4",
+    "hardhat": "^2.22.2"
+  }
+}
